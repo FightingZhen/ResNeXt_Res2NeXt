@@ -154,17 +154,17 @@ class Res2NeXt(object):
                     _slice = self.avgPool(_slice, ksize=2, stride=2, scope_name='_adjust_dim')
                 if i > 0:
                     with tf.variable_scope('slice_' + str(i)):
-                        _slice = self.conv(_slice, out_channel=width, ksize=ksize, stride=stride, scope_name='_conv')
+                        _slice = self.conv(_slice, out_channel=width, ksize=ksize, stride=stride,
+                                           scope_name='_conv')
+                        _slice = self.bn(_slice, is_training=is_training, scope_name='_bn')
+                        _slice = self.relu(_slice, scope_name='_relu')
                 if i > 1:
                     _slice = tf.add(_slice, featureMap_list[-1], name='add_slice_{}_{}'.format(i - 1, i))
-
                 featureMap_list.append(_slice)
 
             concatenated = self.concatenation(featureMap_list, axis=3, scope_name='_concatenation')
-            _bn = self.bn(concatenated, is_training=is_training, scope_name='_bn')
-            _relu = self.relu(_bn, scope_name='_relu')
 
-            return _relu
+            return concatenated
 
     def residual_block(self, inputMap, ksize, out_channel, scale, scope_name, is_training, first_block):
         with tf.variable_scope(scope_name):

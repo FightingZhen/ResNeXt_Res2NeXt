@@ -123,16 +123,17 @@ class ResNeXt(object):
 
             featureMaps_list = list()
             for i in range(group):
-                _featureMap = inputMap[:, :, :, i * group_dim:(i + 1) * group_dim]
-                _conv = self.conv(_featureMap, out_channel=group_dim, ksize=ksize, stride=stride,
-                                  scope_name='_conv_group' + str(i + 1))
-                featureMaps_list.append(_conv)
+                with tf.variable_scope('_group_' + str(i)):
+                    _featureMap = inputMap[:, :, :, i * group_dim:(i + 1) * group_dim]
+                    _conv = self.conv(_featureMap, out_channel=group_dim, ksize=ksize, stride=stride,
+                                      scope_name='_conv')
+                    _bn = self.bn(_conv, is_training=is_training, scope_name='_bn')
+                    _relu = self.relu(_bn, scope_name='_relu')
+                featureMaps_list.append(_relu)
 
             concatenated = self.concatenation(featureMaps_list, axis=3, scope_name='_concatenated')
-            _bn = self.bn(concatenated, is_training=is_training, scope_name='_bn')
-            _relu = self.relu(_bn, scope_name='_relu')
 
-            return _relu
+            return concatenated
 
     def residual_block(self, inputMap, ksize, out_channel, cardinality, scope_name, is_training, first_block):
         with tf.variable_scope(scope_name):
