@@ -10,8 +10,8 @@ import time
 
 class ResNeXt(object):
     def __init__(self, model_name, sess, train_data, tst_data, epoch, num_class, ksize, weight_decay, momentum,
-                 cardinality, width, block_num1, block_num2, block_num3, learning_rate, batch_size, img_height,
-                 img_width):
+                 multiplier, cardinality, width, block_num1, block_num2, block_num3, learning_rate, batch_size,
+                 img_height, img_width):
 
         self.sess = sess
         self.training_data = train_data
@@ -22,6 +22,7 @@ class ResNeXt(object):
         self.k = ksize
         self.wd = weight_decay
         self.momentum = momentum
+        self.multiplier = multiplier
         self.c = cardinality
         self.w = width
         self.block_num1 = block_num1
@@ -33,10 +34,6 @@ class ResNeXt(object):
         self.img_w = img_width
         self.num_class = num_class
 
-        self.oc1 = self.c * self.w
-        self.oc2 = self.oc1 * 2
-        self.oc3 = self.oc2 * 2
-
         self.build_model()
         self.saveConfiguration()
 
@@ -47,11 +44,9 @@ class ResNeXt(object):
         save2file('ksize : %d' % self.k, self.ckptDir, self.model)
         save2file('weight decay : %g' % self.wd, self.ckptDir, self.model)
         save2file('momentum : %g' % self.momentum, self.ckptDir, self.model)
+        save2file('multiplier : %d' % self.multiplier, self.ckptDir, self.model)
         save2file('cardinality : %d' % self.c, self.ckptDir, self.model)
         save2file('width : %d' % self.w, self.ckptDir, self.model)
-        save2file('out channel 1 : %d' % self.oc1, self.ckptDir, self.model)
-        save2file('out channel 2 : %d' % self.oc2, self.ckptDir, self.model)
-        save2file('out channel 3 : %d' % self.oc3, self.ckptDir, self.model)
         save2file('learning rate : %g' % self.lr, self.ckptDir, self.model)
         save2file('batch size : %d' % self.bs, self.ckptDir, self.model)
         save2file('image height : %d' % self.img_h, self.ckptDir, self.model)
@@ -61,7 +56,9 @@ class ResNeXt(object):
         with tf.variable_scope(scope_name):
             conv_result = tf.layers.conv2d(inputs=inputMap, filters=out_channel, kernel_size=(ksize, ksize),
                                            strides=(stride, stride), padding=padding, use_bias=False,
-                                           kernel_initializer=layers.variance_scaling_initializer(), name='conv')
+                                           kernel_initializer=layers.variance_scaling_initializer(),
+                                           kernel_regularizer=layers.l2_regularizer(self.wd),
+                                           name='conv')
 
             return conv_result
 
@@ -93,7 +90,9 @@ class ResNeXt(object):
     def linear(self, inputMap, out_channel, scope_name, use_bias):
         with tf.variable_scope(scope_name):
             linear_result = tf.layers.dense(inputs=inputMap, units=out_channel,
-                                            kernel_initializer=layers.variance_scaling_initializer(), use_bias=use_bias,
+                                            kernel_initializer=layers.variance_scaling_initializer(),
+                                            kernel_regularizer=layers.l2_regularizer(self.wd),
+                                            use_bias=use_bias,
                                             name='linear')
 
             return linear_result
@@ -103,6 +102,7 @@ class ResNeXt(object):
             _conv = self.conv(inputMap, out_channel=out_channel, ksize=self.k, stride=1, scope_name='_conv')
             _bn = self.bn(_conv, scope_name='_bn', is_training=is_training)
             _relu = self.relu(_bn, scope_name='_relu')
+
             return _relu
 
     def transition_layer(self, inputMap, out_channel, scope_name, is_training, use_relu):
@@ -116,48 +116,52 @@ class ResNeXt(object):
 
             return _result
 
-    def groupConv_layer(self, inputMap, ksize, stride, group, scope_name, is_training):
+    def groupConv_layer(self, inputMap, ksize, stride, cardinality, scope_name, is_training):
         with tf.variable_scope(scope_name):
             in_dim = int(np.shape(inputMap)[-1])
-            group_dim = in_dim // group
+            assert in_dim % cardinality == 0
+            singleGroup_dim = in_dim // cardinality
 
-            split_featureMaps = tf.split(inputMap, num_or_size_splits=group, axis=3)
+            split_featureMaps = tf.split(inputMap, num_or_size_splits=cardinality, axis=3)
 
             featureMaps_list = list()
-            for i in range(group):
-                _conv = self.conv(split_featureMaps[i], out_channel=group_dim, ksize=ksize, stride=stride,
+            for i in range(cardinality):
+                _conv = self.conv(split_featureMaps[i], out_channel=singleGroup_dim, ksize=ksize, stride=stride,
                                   scope_name='_conv_' + str(i))
                 featureMaps_list.append(_conv)
 
-            concatenated = self.concatenation(featureMaps_list, axis=3, scope_name='_concatenated')
+            concatenated = self.concatenation(featureMaps_list, axis=3, scope_name='_concatenation')
 
             _bn = self.bn(concatenated, is_training=is_training, scope_name='_bn')
             _relu = self.relu(_bn, scope_name='_relu')
 
             return _relu
 
-    def residual_block(self, inputMap, ksize, out_channel, cardinality, scope_name, is_training, first_block):
+    def residual_block(self, inputMap, ksize, width, cardinality, multiplier, scope_name, is_training, first_block):
         with tf.variable_scope(scope_name):
-            input_dim = int(np.shape(inputMap)[-1])
+            in_dim = int(np.shape(inputMap)[-1])
 
-            if input_dim == out_channel * 4:
+            if in_dim == width * cardinality * multiplier:
                 stride = 1
                 flag = False
             elif first_block:
                 stride = 1
-                pad_channel = int(out_channel * 4 - input_dim) // 2
+                pad_channel = int(width * cardinality * multiplier - in_dim) // 2
                 flag = True
             else:
                 stride = 2
-                pad_channel = int(out_channel * 4 - input_dim) // 2
+                pad_channel = int(width * cardinality * multiplier - in_dim) // 2
                 flag = True
 
-            _fuse_layer = self.transition_layer(inputMap, out_channel=out_channel, scope_name='_fuse_layer',
-                                                is_training=is_training, use_relu=True)
-            _groupConv_layer = self.groupConv_layer(_fuse_layer, ksize=ksize, stride=stride, group=cardinality,
-                                                    scope_name='_groupConv_layer', is_training=is_training)
-            _expand_layer = self.transition_layer(_groupConv_layer, out_channel=out_channel * 4,
-                                                  scope_name='_expand_layer', is_training=is_training, use_relu=False)
+            _compression_layer = self.transition_layer(inputMap, out_channel=width * cardinality,
+                                                       scope_name='_compression_layer', is_training=is_training,
+                                                       use_relu=True)
+            _groupConv_layer = self.groupConv_layer(_compression_layer, ksize=ksize, stride=stride,
+                                                    cardinality=cardinality, scope_name='_groupConv_layer',
+                                                    is_training=is_training)
+            _expansion_layer = self.transition_layer(_groupConv_layer, out_channel=width * cardinality * multiplier,
+                                                     scope_name='_expansion_layer', is_training=is_training,
+                                                     use_relu=False)
 
             if flag:
                 padding = [[0, 0], [0, 0], [0, 0], [pad_channel, pad_channel]]
@@ -168,32 +172,35 @@ class ResNeXt(object):
             else:
                 identity_map = inputMap
 
-            _added = tf.add(_expand_layer, identity_map, name='_added')
-            _final_relu = self.relu(_added, scope_name='_final_relu')
+            _add_residual = tf.add(_expansion_layer, identity_map, name='_add_residual')
+            _relu_residual = self.relu(_add_residual, scope_name='_relu_residual')
 
-            return _final_relu
+            return _relu_residual
 
-    def residual_stage(self, inputMap, ksize, out_channel, cardinality, block_num, stage_name, is_training,
+    def residual_stage(self, inputMap, ksize, width, cardinality, multiplier, block_num, stage_name, is_training,
                        first_stage):
         with tf.variable_scope(stage_name):
-            _block = self.residual_block(inputMap, ksize=ksize, out_channel=out_channel, cardinality=cardinality,
-                                         scope_name='_block1', is_training=is_training, first_block=first_stage)
+            _block = self.residual_block(inputMap, ksize=ksize, width=width, cardinality=cardinality,
+                                         multiplier=multiplier, scope_name='_block1', is_training=is_training,
+                                         first_block=first_stage)
             for i in range(2, block_num + 1):
-                _block = self.residual_block(_block, ksize=ksize, out_channel=out_channel, cardinality=cardinality,
-                                             scope_name='_block' + str(i), is_training=is_training, first_block=False)
+                _block = self.residual_block(_block, ksize=ksize, width=width, cardinality=cardinality,
+                                             multiplier=multiplier, scope_name='_block' + str(i),
+                                             is_training=is_training, first_block=False)
 
             return _block
 
-    def resnext_model(self, inputMap, model_name, ksize, cardinality, block_num1, block_num2, block_num3, out_channel1,
-                      out_channel2, out_channel3, is_training, reuse):
+    def resnext_model(self, inputMap, model_name, ksize, width, cardinality, multiplier, block_num1, block_num2,
+                      block_num3, is_training, reuse):
         with tf.variable_scope(model_name, reuse=reuse):
             _first_layer = self.first_layer(inputMap, out_channel=64, is_training=is_training,
                                             scope_name='_first_layer')
 
             stage1 = self.residual_stage(inputMap=_first_layer,
                                          ksize=ksize,
-                                         out_channel=out_channel1,
+                                         width=width,
                                          cardinality=cardinality,
+                                         multiplier=multiplier,
                                          block_num=block_num1,
                                          stage_name='_stage1',
                                          is_training=is_training,
@@ -201,8 +208,9 @@ class ResNeXt(object):
 
             stage2 = self.residual_stage(inputMap=stage1,
                                          ksize=ksize,
-                                         out_channel=out_channel2,
+                                         width=width * 2,
                                          cardinality=cardinality,
+                                         multiplier=multiplier,
                                          block_num=block_num2,
                                          stage_name='_stage2',
                                          is_training=is_training,
@@ -210,8 +218,9 @@ class ResNeXt(object):
 
             stage3 = self.residual_stage(inputMap=stage2,
                                          ksize=ksize,
-                                         out_channel=out_channel3,
+                                         width=width * 4,
                                          cardinality=cardinality,
+                                         multiplier=multiplier,
                                          block_num=block_num3,
                                          stage_name='_stage3',
                                          is_training=is_training,
@@ -234,20 +243,19 @@ class ResNeXt(object):
         self.y_pred, self.y_pred_softmax = self.resnext_model(inputMap=self.x,
                                                               model_name=self.model,
                                                               ksize=self.k,
+                                                              width=self.w,
                                                               cardinality=self.c,
+                                                              multiplier=self.multiplier,
                                                               block_num1=self.block_num1,
                                                               block_num2=self.block_num2,
                                                               block_num3=self.block_num3,
-                                                              out_channel1=self.oc1,
-                                                              out_channel2=self.oc2,
-                                                              out_channel3=self.oc3,
                                                               is_training=self.is_training,
                                                               reuse=False)
 
         with tf.variable_scope('loss'):
             self.cost = tf.reduce_mean(
                 tf.nn.softmax_cross_entropy_with_logits(logits=self.y_pred, labels=self.y))
-            self.l2_loss = tf.add_n([tf.nn.l2_loss(var) for var in tf.trainable_variables()])
+            self.l2_loss = tf.add_n(tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES))
             self.loss = self.cost + self.wd * self.l2_loss
             tf.summary.scalar('Loss/cost', self.cost)
             tf.summary.scalar('Loss/L2_loss', self.l2_loss)
