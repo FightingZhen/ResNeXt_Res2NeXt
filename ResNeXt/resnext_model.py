@@ -121,19 +121,20 @@ class ResNeXt(object):
             in_dim = int(np.shape(inputMap)[-1])
             group_dim = in_dim // group
 
+            split_featureMaps = tf.split(inputMap, num_or_size_splits=group, axis=3)
+
             featureMaps_list = list()
             for i in range(group):
-                with tf.variable_scope('_group_' + str(i)):
-                    _featureMap = inputMap[:, :, :, i * group_dim:(i + 1) * group_dim]
-                    _conv = self.conv(_featureMap, out_channel=group_dim, ksize=ksize, stride=stride,
-                                      scope_name='_conv')
-                    _bn = self.bn(_conv, is_training=is_training, scope_name='_bn')
-                    _relu = self.relu(_bn, scope_name='_relu')
-                featureMaps_list.append(_relu)
+                _conv = self.conv(split_featureMaps[i], out_channel=group_dim, ksize=ksize, stride=stride,
+                                  scope_name='_conv_' + str(i))
+                featureMaps_list.append(_conv)
 
             concatenated = self.concatenation(featureMaps_list, axis=3, scope_name='_concatenated')
 
-            return concatenated
+            _bn = self.bn(concatenated, is_training=is_training, scope_name='_bn')
+            _relu = self.relu(_bn, scope_name='_relu')
+
+            return _relu
 
     def residual_block(self, inputMap, ksize, out_channel, cardinality, scope_name, is_training, first_block):
         with tf.variable_scope(scope_name):
