@@ -16,12 +16,11 @@ parser.add_argument('-epoch', default=300, type=int)
 parser.add_argument('-num_class', default=100, type=int)
 parser.add_argument('-ksize', default=3, type=int)
 parser.add_argument('-weight_decay', default=5e-4, type=float)
-parser.add_argument('-momentum', default=0.9, type=float)
 parser.add_argument('-multiplier', default=4, type=int)
 parser.add_argument('-block_num1', default=3, type=int)
 parser.add_argument('-block_num2', default=3, type=int)
 parser.add_argument('-block_num3', default=3, type=int)
-parser.add_argument('-learning_rate', default=0.1, type=float)
+parser.add_argument('-learning_rate', default=1e-3, type=float)
 parser.add_argument('-batch_size', default=64, type=int)
 parser.add_argument('-img_height', default=32, type=int)
 parser.add_argument('-img_width', default=32, type=int)
@@ -51,7 +50,6 @@ with tf.Session(config=config) as sess:
                             num_class=args.num_class,
                             ksize=args.ksize,
                             weight_decay=args.weight_decay,
-                            momentum=args.momentum,
                             multiplier=args.multiplier,
                             cardinality=args.cardinality,
                             width=args.width,

@@ -9,9 +9,9 @@ import time
 
 
 class ResNeXt(object):
-    def __init__(self, model_name, sess, train_data, tst_data, epoch, num_class, ksize, weight_decay, momentum,
-                 multiplier, cardinality, width, block_num1, block_num2, block_num3, learning_rate, batch_size,
-                 img_height, img_width):
+    def __init__(self, model_name, sess, train_data, tst_data, epoch, num_class, ksize, weight_decay, multiplier,
+                 cardinality, width, block_num1, block_num2, block_num3, learning_rate, batch_size, img_height,
+                 img_width):
 
         self.sess = sess
         self.training_data = train_data
@@ -21,7 +21,6 @@ class ResNeXt(object):
         self.ckptDir = '../checkpoint/' + self.model + '/'
         self.k = ksize
         self.wd = weight_decay
-        self.momentum = momentum
         self.multiplier = multiplier
         self.c = cardinality
         self.w = width
@@ -43,7 +42,6 @@ class ResNeXt(object):
         save2file('epoch : %d' % self.eps, self.ckptDir, self.model)
         save2file('ksize : %d' % self.k, self.ckptDir, self.model)
         save2file('weight decay : %g' % self.wd, self.ckptDir, self.model)
-        save2file('momentum : %g' % self.momentum, self.ckptDir, self.model)
         save2file('multiplier : %d' % self.multiplier, self.ckptDir, self.model)
         save2file('cardinality : %d' % self.c, self.ckptDir, self.model)
         save2file('width : %d' % self.w, self.ckptDir, self.model)
@@ -264,7 +262,7 @@ class ResNeXt(object):
         with tf.variable_scope('optimize'):
             update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
             with tf.control_dependencies(update_ops):
-                self.train_op = tf.train.MomentumOptimizer(self.lr, momentum=self.momentum).minimize(self.loss)
+                self.train_op = tf.train.AdamOptimizer(self.lr).minimize(self.loss)
 
         with tf.variable_scope('tfSummary'):
             self.merged = tf.summary.merge_all()
